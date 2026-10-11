@@ -70,7 +70,6 @@ SKLEPY_LM = [
 ]
 
 
-# Funkcja do wczytywania głównej bazy z pliku CSV
 def load_data():
   if os.path.exists(DB_FILE):
     try:
@@ -95,7 +94,6 @@ def save_data(df):
   df.to_csv(DB_FILE, index=False)
 
 
-# Funkcja do wczytywania historii rezerwacji / cesji
 def load_history():
   if os.path.exists(HISTORY_FILE):
     try:
@@ -135,7 +133,7 @@ menu = st.tabs([
     "⚙️ Zarządzanie Bazą",
 ])
 
-# --- TAB 1: SZUKAJ TOWARU & AUTOMATYCZNA CESJA ---
+# --- TAB 1: SZUKAJ TOWARU & REZERWACJA ---
 with menu[0]:
   st.header("Wyszukiwarka i Rezerwacja / Cesja")
   search_query = st.text_input("Wpisz nazwę, numer ref lub dział:", "").lower()
@@ -188,7 +186,7 @@ with menu[0]:
                   ilosc_akt = int(row["ilosc"])
                   real_idx = df[df["id"] == row["id"]].index[0]
 
-                  # 1. Zapisujemy do historii ze statusem 🔴 Oczekuje na cesję
+                  # Zapis do historii – automatycznie 🔴 Oczekuje na cesję
                   new_hist_id = (
                       int(history_df["id"].max()) + 1
                       if not history_df["id"].empty
@@ -212,13 +210,13 @@ with menu[0]:
                   )
                   save_history(history_df)
 
-                  # 2. Aktualizujemy stan głównej giełdy
+                  # Aktualizacja bazy głównej
                   if ilosc_pobrana >= ilosc_akt:
                     df = df.drop(real_idx).reset_index(drop=True)
                     komunikat = f"Pobrano ostatnie sztuki! Zarejestrowano cesję dla {sklep_zamawiajacy}."
                   else:
                     df.at[real_idx, "ilosc"] = ilosc_akt - ilosc_pobrana
-                    komunikat = f"Zarezerwowano {ilosc_pobrana} szt. dla {sklep_zamawiajacy}. Zgłoszenie trafiło do historii."
+                    komunikat = f"Zarezerwowano {ilosc_pobrana} szt. dla {sklep_zamawiajacy}. Zgłoszenie trafiło do oczekujących."
 
                   if not df.empty:
                     df["id"] = range(1, len(df) + 1)
@@ -280,16 +278,21 @@ with menu[1]:
         st.toast("Pomyślnie dodano produkt do giełdy!", icon="🚀")
         st.rerun()
 
-# --- TAB 3: REZERWACJE I CESJE Z ROZWIJANYM STATUSIEM I ARCHIWUM ---
+# --- TAB 3: AKTYWNE REZERWACJE I AUTOMATYCZNE ZWRACANIE ---
 with menu[2]:
-  st.header("📋 Rejestr Rezerwacji i Oczekujących Cesji")
+  st.header("📋 Oczekujące Cesje i Rezerwacje")
   st.markdown(
-      "Kliknij w komórkę w kolumnie **status**, aby zmienić go z 🔴 *Oczekuje na"
-      " cesję* na 🟢 *Zrealizowany* po wysłaniu dokumentu."
+      "Tutaj znajdują się wyłącznie **aktywne cesje**. Po zmianie statusu na"
+      " **🟢 Zrealizowany** lub **⚪ Anulowany** pozycja zniknie z tej tabeli i"
+      " trafi do archiwum na dole."
   )
 
-  if not history_df.empty:
-    # Ustawienie rozwijanej listy dla kolumny STATUS
+  # Pokazujemy TYLKO te wiersze, które OCZEKUJĄ NA CESJĘ
+  oczekujace_df = history_df[
+      history_df["status"] == "🔴 Oczekuje na cesję"
+  ].copy()
+
+  if not oczekujace_df.empty:
     column_config = {
         "status": st.column_config.SelectboxColumn(
             "Status Cesji",
@@ -299,30 +302,81 @@ with menu[2]:
         )
     }
 
-    # Edytor danych dla historii
-    edited_history = st.data_editor(
-        history_df,
+    edited_oczekujace = st.data_editor(
+        oczekujace_df,
         column_config=column_config,
-        num_rows="dynamic",
-        key="history_editor",
+        num_rows="fixed",  # Usuwanie tylko przez zmianę statusu
+        key="oczekujace_editor",
     )
 
-    if st.button("💾 Zapisz zmiany w historii cesji"):
-      save_history(edited_history)
-      st.toast("Statusy cesji zostały zaktualizowane!", icon="💾")
+    if st.button("💾 Zapisz zmiany w cesjach"):
+      # Przetwarzamy zmiany z edytora do pełnej bazy historii
+      for idx, row in edited_oczekujace.iterrows():
+        hist_idx = history_df[history_df["id"] == row["id"]].index[0]
+        stary_status = history_df.at[hist_idx, "status"]
+        nowy_status = row["status"]
+
+        if stary_status != nowy_status:
+          history_df.at[hist_idx, "status"] = nowy_status
+
+          # JEŚLI ANULOWANO CESJĘ – ZWRACAMY TOWAR DO GŁÓWNEJ GIEŁDY!
+          if nowy_status == "⚪ Anulowany":
+            match_gielda = df[
+                (df["sklep"] == row["sklep_zrodlowy"])
+                & (df["ref"] == row["ref"])
+            ]
+            if not match_gielda.empty:
+              # Zwiększamy ilość towaru u źródła
+              g_idx = match_gielda.index[0]
+              df.at[g_idx, "ilosc"] = (
+                  int(df.at[g_idx, "ilosc"]) + int(row["ilosc"])
+              )
+            else:
+              # Jeśli towar zniknął całkowicie, tworzymy go na nowo w bazie
+              g_new_id = (
+                  int(df["id"].max()) + 1
+                  if not df["id"].empty and pd.notna(df["id"].max())
+                  else 1
+              )
+              zwracany_wiersz = pd.DataFrame([{
+                  "id": g_new_id,
+                  "sklep": row["sklep_zrodlowy"],
+                  "dzial": "Zwrot z cesji",
+                  "ref": row["ref"],
+                  "nazwa": row["nazwa"],
+                  "ilosc": row["ilosc"],
+                  "typ": row["typ"],
+                  "kontakt": row["kontakt_oferujacy"],
+                  "status": "Dostępne",
+                  "data_dodania": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+              }])
+              df = pd.concat([df, zwracany_wiersz], ignore_index=True)
+
+            if not df.empty:
+              df["id"] = range(1, len(df) + 1)
+            save_data(df)
+            st.toast(
+                f"Anulowano cesję. Zwórcono {row['ilosc']} szt. do giełdy!",
+                icon="🔄",
+            )
+
+      save_history(history_df)
+      st.toast("Zapisano zmiany!", icon="💾")
       st.rerun()
-
-    st.divider()
-
-    # --- ARCHIWUM ZREALIZOWANYCH CESJI (Zwijana sekcja) ---
-    with st.expander("📦 Zobacz Archiwum Zrealizowanych / Anulowanych Cesji"):
-      zrealizowane = history_df[history_df["status"] != "🔴 Oczekuje na cesję"]
-      if not zrealizowane.empty:
-        st.dataframe(zrealizowane, use_container_width=True)
-      else:
-        st.info("Brak zrealizowanych cesji w archiwum.")
   else:
-    st.info("Brak zarejestrowanych rezerwacji.")
+    st.info("Brak oczekujących cesji. Wszystkie sprawy są zrealizowane!")
+
+  st.divider()
+
+  # --- ARCHIWUM (POKAZUJE ZREALIZOWANE I ANULOWANE) ---
+  with st.expander("📦 Zobacz Archiwum Zrealizowanych / Anulowanych Cesji"):
+    zrealizowane = history_df[
+        history_df["status"] != "🔴 Oczekuje na cesję"
+    ].copy()
+    if not zrealizowane.empty:
+      st.dataframe(zrealizowane, use_container_width=True)
+    else:
+      st.info("Brak zrealizowanych lub anulowanych cesji w archiwum.")
 
 # --- TAB 4: ZARZĄDZAJ BAZĄ ---
 with menu[3]:
