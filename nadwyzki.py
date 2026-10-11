@@ -134,7 +134,7 @@ menu = st.tabs([
     "⚙️ Zarządzanie Bazą",
 ])
 
-# --- TAB 1: SZUKAJ TOWARU & REZERWACJA ---
+# --- TAB 1: SZUKAJ TOWARU & REZERWACJA Z ZABEZPIECZENIEM KONKURENCYJNYM ---
 with menu[0]:
   st.header("Wyszukiwarka i Rezerwacja / Cesja")
   search_query = st.text_input("Wpisz nazwę, numer ref lub dział:", "").lower()
@@ -183,48 +183,70 @@ with menu[0]:
                 if sklep_zamawiajacy == "Wybierz sklep...":
                   st.error("Wybierz swój sklep z listy!")
                 else:
-                  ilosc_pobrana = int(ilosc_do_rezerwacji)
-                  ilosc_akt = int(row["ilosc"])
-                  real_idx = df[df["id"] == row["id"]].index[0]
+                  # KLUCZOWY KROK: Pobieramy najświeższy stan z bazy w ułamku sekundy kliknięcia!
+                  live_df = load_data()
+                  live_history = load_history()
 
-                  new_hist_id = (
-                      int(history_df["id"].max()) + 1
-                      if not history_df["id"].empty
-                      and pd.notna(history_df["id"].max())
-                      else 1
-                  )
-                  # Zapisujemy również oryginalny dział do historii
-                  nowy_wpis_historii = pd.DataFrame([{
-                      "id": new_hist_id,
-                      "data": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                      "sklep_zrodlowy": row["sklep"],
-                      "sklep_docelowy": sklep_zamawiajacy,
-                      "dzial": row["dzial"],
-                      "ref": row["ref"],
-                      "nazwa": row["nazwa"],
-                      "ilosc": ilosc_pobrana,
-                      "typ": row["typ"],
-                      "kontakt_oferujacy": row["kontakt"],
-                      "status": "🔴 Oczekuje na cesję",
-                  }])
-                  history_df = pd.concat(
-                      [history_df, nowy_wpis_historii], ignore_index=True
-                  )
-                  save_history(history_df)
+                  # Szukamy tego samego produktu po unikalnym ID w aktualnym pliku
+                  match_item = live_df[live_df["id"] == row["id"]]
 
-                  if ilosc_pobrana >= ilosc_akt:
-                    df = df.drop(real_idx).reset_index(drop=True)
-                    komunikat = f"Pobrano ostatnie sztuki! Zarejestrowano cesję dla {sklep_zamawiajacy}."
+                  if match_item.empty:
+                    st.error(
+                        "⚠️ Ten towar został już w całości pobrany przez kogoś"
+                        " innego w międzyczasie! Odśwież stronę."
+                    )
                   else:
-                    df.at[real_idx, "ilosc"] = ilosc_akt - ilosc_pobrana
-                    komunikat = f"Zarezerwowano {ilosc_pobrana} szt. dla {sklep_zamawiajacy}. Zgłoszenie trafiło do oczekujących."
+                    real_idx = match_item.index[0]
+                    ilosc_akt = int(live_df.at[real_idx, "ilosc"])
+                    ilosc_pobrana = int(ilosc_do_rezerwacji)
 
-                  if not df.empty:
-                    df["id"] = range(1, len(df) + 1)
+                    if ilosc_pobrana > ilosc_akt:
+                      st.error(
+                          f"⚠️ Ktoś właśnie zarezerwował część towaru! Dostępne"
+                          f" jest teraz tylko {ilosc_akt} szt."
+                      )
+                    else:
+                      # Zapis do historii
+                      new_hist_id = (
+                          int(live_history["id"].max()) + 1
+                          if not live_history["id"].empty
+                          and pd.notna(live_history["id"].max())
+                          else 1
+                      )
+                      nowy_wpis_historii = pd.DataFrame([{
+                          "id": new_hist_id,
+                          "data": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                          "sklep_zrodlowy": row["sklep"],
+                          "sklep_docelowy": sklep_zamawiajacy,
+                          "dzial": row["dzial"],
+                          "ref": row["ref"],
+                          "nazwa": row["nazwa"],
+                          "ilosc": ilosc_pobrana,
+                          "typ": row["typ"],
+                          "kontakt_oferujacy": row["kontakt"],
+                          "status": "🔴 Oczekuje na cesję",
+                      }])
+                      live_history = pd.concat(
+                          [live_history, nowy_wpis_historii], ignore_index=True
+                      )
+                      save_history(live_history)
 
-                  save_data(df)
-                  st.toast(komunikat, icon="✅")
-                  st.rerun()
+                      # Aktualizacja stanu w żywej bazie
+                      if ilosc_pobrana >= ilosc_akt:
+                        live_df = live_df.drop(real_idx).reset_index(drop=True)
+                        komunikat = f"Pobrano ostatnie sztuki! Zarejestrowano cesję dla {sklep_zamawiajacy}."
+                      else:
+                        live_df.at[real_idx, "ilosc"] = (
+                            ilosc_akt - ilosc_pobrana
+                        )
+                        komunikat = f"Zarezerwowano {ilosc_pobrana} szt. dla {sklep_zamawiajacy}."
+
+                      if not live_df.empty:
+                        live_df["id"] = range(1, len(live_df) + 1)
+
+                      save_data(live_df)
+                      st.toast(komunikat, icon="✅")
+                      st.rerun()
           else:
             st.markdown("*Brak sztuk do pobrania*")
         st.divider()
@@ -256,9 +278,10 @@ with menu[1]:
             "Wybierz sklep z listy oraz wypełnij wymagane pola (Nazwa, Ref)!"
         )
       else:
+        live_df = load_data()
         new_id = (
-            int(df["id"].max()) + 1
-            if not df["id"].empty and pd.notna(df["id"].max())
+            int(live_df["id"].max()) + 1
+            if not live_df["id"].empty and pd.notna(live_df["id"].max())
             else 1
         )
         nowy_wpis = pd.DataFrame([{
@@ -273,9 +296,9 @@ with menu[1]:
             "status": "Dostępne",
             "data_dodania": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }])
-        df = pd.concat([df, nowy_wpis], ignore_index=True)
-        df["id"] = range(1, len(df) + 1)
-        save_data(df)
+        live_df = pd.concat([live_df, nowy_wpis], ignore_index=True)
+        live_df["id"] = range(1, len(live_df) + 1)
+        save_data(live_df)
         st.toast("Pomyślnie dodano produkt do giełdy!", icon="🚀")
         st.rerun()
 
@@ -288,8 +311,9 @@ with menu[2]:
       " trafi do archiwum na dole."
   )
 
-  oczekujace_df = history_df[
-      history_df["status"] == "🔴 Oczekuje na cesję"
+  history_df_live = load_history()
+  oczekujace_df = history_df_live[
+      history_df_live["status"] == "🔴 Oczekuje na cesję"
   ].copy()
 
   if not oczekujace_df.empty:
@@ -310,55 +334,55 @@ with menu[2]:
     )
 
     if st.button("💾 Zapisz zmiany w cesjach"):
+      live_hist = load_history()
+      live_db = load_data()
+
       for idx, row in edited_oczekujace.iterrows():
-        hist_idx = history_df[history_df["id"] == row["id"]].index[0]
-        stary_status = history_df.at[hist_idx, "status"]
-        nowy_status = row["status"]
+        hist_match = live_hist[live_hist["id"] == row["id"]]
+        if not hist_match.empty:
+          hist_idx = hist_match.index[0]
+          stary_status = live_hist.at[hist_idx, "status"]
+          nowy_status = row["status"]
 
-        if stary_status != nowy_status:
-          history_df.at[hist_idx, "status"] = nowy_status
+          if stary_status != nowy_status:
+            live_hist.at[hist_idx, "status"] = nowy_status
 
-          if nowy_status == "⚪ Anulowany":
-            match_gielda = df[
-                (df["sklep"] == row["sklep_zrodlowy"])
-                & (df["ref"] == row["ref"])
-            ]
-            if not match_gielda.empty:
-              g_idx = match_gielda.index[0]
-              df.at[g_idx, "ilosc"] = (
-                  int(df.at[g_idx, "ilosc"]) + int(row["ilosc"])
-              )
-            else:
-              g_new_id = (
-                  int(df["id"].max()) + 1
-                  if not df["id"].empty and pd.notna(df["id"].max())
-                  else 1
-              )
-              # Przywracamy oryginalny dział zapisany w historii!
-              zwracany_wiersz = pd.DataFrame([{
-                  "id": g_new_id,
-                  "sklep": row["sklep_zrodlowy"],
-                  "dzial": row["dzial"],
-                  "ref": row["ref"],
-                  "nazwa": row["nazwa"],
-                  "ilosc": row["ilosc"],
-                  "typ": row["typ"],
-                  "kontakt": row["kontakt_oferujacy"],
-                  "status": "Dostępne",
-                  "data_dodania": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-              }])
-              df = pd.concat([df, zwracany_wiersz], ignore_index=True)
+            if nowy_status == "⚪ Anulowany":
+              match_gielda = live_db[
+                  (live_db["sklep"] == row["sklep_zrodlowy"])
+                  & (live_db["ref"] == row["ref"])
+              ]
+              if not match_gielda.empty:
+                g_idx = match_gielda.index[0]
+                live_db.at[g_idx, "ilosc"] = (
+                    int(live_db.at[g_idx, "ilosc"]) + int(row["ilosc"])
+                )
+              else:
+                g_new_id = (
+                    int(live_db["id"].max()) + 1
+                    if not live_db["id"].empty and pd.notna(live_db["id"].max())
+                    else 1
+                )
+                zwracany_wiersz = pd.DataFrame([{
+                    "id": g_new_id,
+                    "sklep": row["sklep_zrodlowy"],
+                    "dzial": row["dzial"],
+                    "ref": row["ref"],
+                    "nazwa": row["nazwa"],
+                    "ilosc": row["ilosc"],
+                    "typ": row["typ"],
+                    "kontakt": row["kontakt_oferujacy"],
+                    "status": "Dostępne",
+                    "data_dodania": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                }])
+                live_db = pd.concat([live_db, zwracany_wiersz], ignore_index=True)
 
-            if not df.empty:
-              df["id"] = range(1, len(df) + 1)
-            save_data(df)
-            st.toast(
-                f"Anulowano cesję. Zwrócono {row['ilosc']} szt. do giełdy!",
-                icon="🔄",
-            )
+              if not live_db.empty:
+                live_db["id"] = range(1, len(live_db) + 1)
+              save_data(live_db)
 
-      save_history(history_df)
-      st.toast("Zapisano zmiany!", icon="💾")
+      save_history(live_hist)
+      st.toast("Zapisano zmiany w cesjach!", icon="💾")
       st.rerun()
   else:
     st.info("Brak oczekujących cesji. Wszystkie sprawy są zrealizowane!")
@@ -366,8 +390,9 @@ with menu[2]:
   st.divider()
 
   with st.expander("📦 Zobacz Archiwum Zrealizowanych / Anulowanych Cesji"):
-    zrealizowane = history_df[
-        history_df["status"] != "🔴 Oczekuje na cesję"
+    current_hist = load_history()
+    zrealizowane = current_hist[
+        current_hist["status"] != "🔴 Oczekuje na cesję"
     ].copy()
     if not zrealizowane.empty:
       st.dataframe(zrealizowane, use_container_width=True)
@@ -379,8 +404,11 @@ with menu[3]:
   st.header("⚙️ Zarządzanie główną bazą giełdy")
   st.markdown("Panel administracyjny do ręcznej korekty bazy.")
 
-  if not df.empty:
-    edited_df = st.data_editor(df, num_rows="dynamic", key="data_editor_db")
+  current_db = load_data()
+  if not current_db.empty:
+    edited_df = st.data_editor(
+        current_db, num_rows="dynamic", key="data_editor_db"
+    )
 
     if st.button("💾 Zapisz zmiany w giełdzie"):
       edited_df["id"] = range(1, len(edited_df) + 1)
