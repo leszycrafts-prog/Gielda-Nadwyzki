@@ -126,6 +126,9 @@ st.title("📦 Giełda Przesunięć Międzymagazynowych & Toxic")
 st.markdown(
     "Centralny system wymiany nadwyżek użytkowych i zapasów trudno zbywalnych."
 )
+# Przycisk szybkiego odświeżania danych dla wszystkich użytkowników
+if st.button("🔄 Odśwież widok / Pobierz najnowsze dane"):
+  st.rerun()
 
 menu = st.tabs([
     "🔍 Szukaj Towaru",
