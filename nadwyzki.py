@@ -186,7 +186,6 @@ with menu[0]:
                   ilosc_akt = int(row["ilosc"])
                   real_idx = df[df["id"] == row["id"]].index[0]
 
-                  # Zapis do historii – automatycznie 🔴 Oczekuje na cesję
                   new_hist_id = (
                       int(history_df["id"].max()) + 1
                       if not history_df["id"].empty
@@ -210,7 +209,6 @@ with menu[0]:
                   )
                   save_history(history_df)
 
-                  # Aktualizacja bazy głównej
                   if ilosc_pobrana >= ilosc_akt:
                     df = df.drop(real_idx).reset_index(drop=True)
                     komunikat = f"Pobrano ostatnie sztuki! Zarejestrowano cesję dla {sklep_zamawiajacy}."
@@ -287,7 +285,6 @@ with menu[2]:
       " trafi do archiwum na dole."
   )
 
-  # Pokazujemy TYLKO te wiersze, które OCZEKUJĄ NA CESJĘ
   oczekujace_df = history_df[
       history_df["status"] == "🔴 Oczekuje na cesję"
   ].copy()
@@ -305,12 +302,11 @@ with menu[2]:
     edited_oczekujace = st.data_editor(
         oczekujace_df,
         column_config=column_config,
-        num_rows="fixed",  # Usuwanie tylko przez zmianę statusu
+        num_rows="fixed",
         key="oczekujace_editor",
     )
 
     if st.button("💾 Zapisz zmiany w cesjach"):
-      # Przetwarzamy zmiany z edytora do pełnej bazy historii
       for idx, row in edited_oczekujace.iterrows():
         hist_idx = history_df[history_df["id"] == row["id"]].index[0]
         stary_status = history_df.at[hist_idx, "status"]
@@ -319,20 +315,17 @@ with menu[2]:
         if stary_status != nowy_status:
           history_df.at[hist_idx, "status"] = nowy_status
 
-          # JEŚLI ANULOWANO CESJĘ – ZWRACAMY TOWAR DO GŁÓWNEJ GIEŁDY!
           if nowy_status == "⚪ Anulowany":
             match_gielda = df[
                 (df["sklep"] == row["sklep_zrodlowy"])
                 & (df["ref"] == row["ref"])
             ]
             if not match_gielda.empty:
-              # Zwiększamy ilość towaru u źródła
               g_idx = match_gielda.index[0]
               df.at[g_idx, "ilosc"] = (
                   int(df.at[g_idx, "ilosc"]) + int(row["ilosc"])
               )
             else:
-              # Jeśli towar zniknął całkowicie, tworzymy go na nowo w bazie
               g_new_id = (
                   int(df["id"].max()) + 1
                   if not df["id"].empty and pd.notna(df["id"].max())
@@ -356,7 +349,7 @@ with menu[2]:
               df["id"] = range(1, len(df) + 1)
             save_data(df)
             st.toast(
-                f"Anulowano cesję. Zwórcono {row['ilosc']} szt. do giełdy!",
+                f"Anulowano cesję. Zwrócono {row['ilosc']} szt. do giełdy!",
                 icon="🔄",
             )
 
@@ -368,7 +361,6 @@ with menu[2]:
 
   st.divider()
 
-  # --- ARCHIWUM (POKAZUJE ZREALIZOWANE I ANULOWANE) ---
   with st.expander("📦 Zobacz Archiwum Zrealizowanych / Anulowanych Cesji"):
     zrealizowane = history_df[
         history_df["status"] != "🔴 Oczekuje na cesję"
@@ -393,3 +385,45 @@ with menu[3]:
       st.rerun()
   else:
     st.info("Brak towarów na giełdzie.")
+
+  st.divider()
+
+  with st.expander("🔐 Strefa Administratora (Wymagane hasło)"):
+    haslo_admina = st.text_input(
+        "Podaj hasło administratora:", type="password", key="admin_pass"
+    )
+
+    if haslo_admina == "LeroyAdmin2026":
+      st.success("Hasło poprawne! Odblokowano strefę zarządzania.")
+      if st.button("🧹 Wyczyść wszystko (Reset giełdy i historii)"):
+        pusta_baza = pd.DataFrame(columns=[
+            "id",
+            "sklep",
+            "dzial",
+            "ref",
+            "nazwa",
+            "ilosc",
+            "typ",
+            "kontakt",
+            "status",
+            "data_dodania",
+        ])
+        pusta_historia = pd.DataFrame(columns=[
+            "id",
+            "data",
+            "sklep_zrodlowy",
+            "sklep_docelowy",
+            "ref",
+            "nazwa",
+            "ilosc",
+            "typ",
+            "kontakt_oferujacy",
+            "status",
+        ])
+
+        save_data(pusta_baza)
+        save_history(pusta_historia)
+        st.toast("Wyczyszczono wszystkie bazy do zera!", icon="🧹")
+        st.rerun()
+    elif haslo_admina != "":
+      st.error("Błędne hasło!")
