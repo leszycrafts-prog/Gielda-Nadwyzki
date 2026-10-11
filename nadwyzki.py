@@ -105,6 +105,7 @@ def load_history():
       "data",
       "sklep_zrodlowy",
       "sklep_docelowy",
+      "dzial",
       "ref",
       "nazwa",
       "ilosc",
@@ -192,11 +193,13 @@ with menu[0]:
                       and pd.notna(history_df["id"].max())
                       else 1
                   )
+                  # Zapisujemy również oryginalny dział do historii
                   nowy_wpis_historii = pd.DataFrame([{
                       "id": new_hist_id,
                       "data": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                       "sklep_zrodlowy": row["sklep"],
                       "sklep_docelowy": sklep_zamawiajacy,
+                      "dzial": row["dzial"],
                       "ref": row["ref"],
                       "nazwa": row["nazwa"],
                       "ilosc": ilosc_pobrana,
@@ -331,10 +334,11 @@ with menu[2]:
                   if not df["id"].empty and pd.notna(df["id"].max())
                   else 1
               )
+              # Przywracamy oryginalny dział zapisany w historii!
               zwracany_wiersz = pd.DataFrame([{
                   "id": g_new_id,
                   "sklep": row["sklep_zrodlowy"],
-                  "dzial": "Zwrot z cesji",
+                  "dzial": row["dzial"],
                   "ref": row["ref"],
                   "nazwa": row["nazwa"],
                   "ilosc": row["ilosc"],
@@ -413,6 +417,7 @@ with menu[3]:
             "data",
             "sklep_zrodlowy",
             "sklep_docelowy",
+            "dzial",
             "ref",
             "nazwa",
             "ilosc",
