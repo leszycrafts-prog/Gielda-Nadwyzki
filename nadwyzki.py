@@ -46,13 +46,13 @@ st.markdown(
 
 menu = st.tabs(["🔍 Szukaj Towaru", "➕ Dodaj Nadwyżkę / Toxic", "📋 Zarządzaj"])
 
-# --- TAB 1: SZUKAJ TOWARU & CZĘŚCIOWA REZERWACJA ---
+# --- TAB 1: SZUKAJ TOWARU & AUTOMATYCZNA CESJA ---
 with menu[0]:
   st.header("Wyszukiwarka i Rezerwacja / Cesja")
   search_query = st.text_input("Wpisz nazwę, numer ref lub dział:", "").lower()
 
   if not df.empty:
-    # Filtrowanie z resetowaniem indeksu, aby uniknąć pomieszania wierszy
+    # Filtrowanie z resetowaniem indeksu
     filtered_df = df[
         df.apply(
             lambda row: search_query in str(row["nazwa"]).lower()
@@ -103,39 +103,20 @@ with menu[0]:
                   real_idx = df[df["id"] == row["id"]].index[0]
 
                   if ilosc_pobrana >= ilosc_akt:
-                    df.at[real_idx, "ilosc"] = 0
-                    df.at[
-                        real_idx, "status"
-                    ] = f"Zarezerwowane ({sklep_zamawiajacy})"
+                    # Jeśli pobrano wszystko – całkowicie usuwamy wiersz z bazy (brak śmieci z ilością 0)
+                    df = df.drop(real_idx).reset_index(drop=True)
+                    komunikat = f"Pobrano ostatnie sztuki! Pozycja zniknęła z giełdy (dla {sklep_zamawiajacy})."
                   else:
+                    # Jeśli pobrano część – tylko pomniejszamy liczbę sztuk u wystawiającego
                     df.at[real_idx, "ilosc"] = ilosc_akt - ilosc_pobrana
-                    new_id = (
-                        int(df["id"].max()) + 1
-                        if not df["id"].empty and pd.notna(df["id"].max())
-                        else 1
-                    )
-                    nowy_wiersz = pd.DataFrame([{
-                        "id": new_id,
-                        "sklep": sklep_zamawiajacy,
-                        "dzial": row["dzial"],
-                        "ref": row["ref"],
-                        "nazwa": row["nazwa"],
-                        "ilosc": ilosc_pobrana,
-                        "typ": row["typ"],
-                        "kontakt": row["kontakt"],
-                        "status": f"Częściowa rezerwacja",
-                        "data_dodania": datetime.now().strftime(
-                            "%Y-%m-%d %H:%M:%S"
-                        ),
-                    }])
-                    df = pd.concat([df, nowy_wiersz], ignore_index=True)
+                    komunikat = f"Zarezerwowano {ilosc_pobrana} szt. Pozostało w {row['sklep']}: {ilosc_akt - ilosc_pobrana} szt."
+
+                  # Automatyczne uporządkowanie ID przed zapisem
+                  if not df.empty:
+                    df["id"] = range(1, len(df) + 1)
 
                   save_data(df)
-                  st.toast(
-                      f"Zarezerwowano {ilosc_pobrana} szt. dla"
-                      f" {sklep_zamawiajacy}!",
-                      icon="✅",
-                  )
+                  st.toast(komunikat, icon="✅")
                   st.rerun()
           else:
             st.markdown("*Brak sztuk do pobrania*")
@@ -184,6 +165,7 @@ with menu[1]:
             "data_dodania": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }])
         df = pd.concat([df, nowy_wpis], ignore_index=True)
+        df["id"] = range(1, len(df) + 1)
         save_data(df)
         st.toast("Pomyślnie dodano produkt do giełdy!", icon="🚀")
         st.rerun()
@@ -201,7 +183,7 @@ with menu[2]:
     edited_df = st.data_editor(df, num_rows="dynamic", key="data_editor_db")
 
     if st.button("💾 Zapisz zmiany w bazie"):
-      # Automatyczne ponowne numerowanie ID od 1 wzwyż po usunięciach
+      # Automatyczne ponowne numerowanie ID od 1 wzwyż
       edited_df["id"] = range(1, len(edited_df) + 1)
       save_data(edited_df)
       st.toast("Zmiany zostały zapisane na stałe w bazie!", icon="💾")
