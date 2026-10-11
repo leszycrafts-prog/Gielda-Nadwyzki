@@ -11,7 +11,7 @@ st.set_page_config(
 DB_FILE = "baza_nadwyzek.csv"
 HISTORY_FILE = "baza_historii.csv"
 
-# Oficjalna lista sklepów Leroy Merlin do wyboru z rozwijanego menu
+# Oficjalna lista sklepów Leroy Merlin
 SKLEPY_LM = [
     "Wybierz sklep...",
     "Białystok",
@@ -91,7 +91,6 @@ def load_data():
   ])
 
 
-# Funkcja do zapisu głównej bazy
 def save_data(df):
   df.to_csv(DB_FILE, index=False)
 
@@ -117,7 +116,6 @@ def load_history():
   ])
 
 
-# Funkcja do zapisu historii
 def save_history(df):
   df.to_csv(HISTORY_FILE, index=False)
 
@@ -177,7 +175,6 @@ with menu[0]:
                   value=min(1, int(row["ilosc"])),
                   key=f"num_{i}",
               )
-              # Wybór sklepu zamawiającego z rozwijanej listy
               sklep_zamawiajacy = st.selectbox(
                   "Twój Sklep / Oddział", SKLEPY_LM, key=f"shop_{i}"
               )
@@ -191,7 +188,7 @@ with menu[0]:
                   ilosc_akt = int(row["ilosc"])
                   real_idx = df[df["id"] == row["id"]].index[0]
 
-                  # 1. Zapisujemy zdarzenie do historii rezerwacji
+                  # 1. Zapisujemy do historii ze statusem 🔴 Oczekuje na cesję
                   new_hist_id = (
                       int(history_df["id"].max()) + 1
                       if not history_df["id"].empty
@@ -208,7 +205,7 @@ with menu[0]:
                       "ilosc": ilosc_pobrana,
                       "typ": row["typ"],
                       "kontakt_oferujacy": row["kontakt"],
-                      "status": "Oczekuje na cesję",
+                      "status": "🔴 Oczekuje na cesję",
                   }])
                   history_df = pd.concat(
                       [history_df, nowy_wpis_historii], ignore_index=True
@@ -241,7 +238,6 @@ with menu[1]:
   with st.form("add_form"):
     col_a, col_b = st.columns(2)
     with col_a:
-      # Wybór sklepu wystawiającego z rozwijanej listy
       sklep = st.selectbox("Nazwa Twojego Sklepu", SKLEPY_LM)
       dzial = st.text_input("Dział (np. Ogród, Narzędzia)")
       ref = st.text_input("Numer referencyjny (Ref)")
@@ -284,37 +280,54 @@ with menu[1]:
         st.toast("Pomyślnie dodano produkt do giełdy!", icon="🚀")
         st.rerun()
 
-# --- TAB 3: REZERWACJE I CESJE (HISTORIA DLA KOORDYNATORÓW) ---
+# --- TAB 3: REZERWACJE I CESJE Z ROZWIJANYM STATUSIEM I ARCHIWUM ---
 with menu[2]:
   st.header("📋 Rejestr Rezerwacji i Oczekujących Cesji")
   st.markdown(
-      "Tutaj koordynatorzy i sklepy mogą sprawdzić, jakie rezerwacje zostały"
-      " zgłoszone z giełdy. Po zrealizowaniu oficjalnej cesji w systemie można"
-      " zaktualizować status lub usunąć wpis."
+      "Kliknij w komórkę w kolumnie **status**, aby zmienić go z 🔴 *Oczekuje na"
+      " cesję* na 🟢 *Zrealizowany* po wysłaniu dokumentu."
   )
 
   if not history_df.empty:
+    # Ustawienie rozwijanej listy dla kolumny STATUS
+    column_config = {
+        "status": st.column_config.SelectboxColumn(
+            "Status Cesji",
+            help="Zmień status rezerwacji",
+            options=["🔴 Oczekuje na cesję", "🟢 Zrealizowany", "⚪ Anulowany"],
+            required=True,
+        )
+    }
+
+    # Edytor danych dla historii
     edited_history = st.data_editor(
-        history_df, num_rows="dynamic", key="history_editor"
+        history_df,
+        column_config=column_config,
+        num_rows="dynamic",
+        key="history_editor",
     )
 
     if st.button("💾 Zapisz zmiany w historii cesji"):
       save_history(edited_history)
-      st.toast("Historia rezerwacji została zaktualizowana!", icon="💾")
+      st.toast("Statusy cesji zostały zaktualizowane!", icon="💾")
       st.rerun()
+
+    st.divider()
+
+    # --- ARCHIWUM ZREALIZOWANYCH CESJI (Zwijana sekcja) ---
+    with st.expander("📦 Zobacz Archiwum Zrealizowanych / Anulowanych Cesji"):
+      zrealizowane = history_df[history_df["status"] != "🔴 Oczekuje na cesję"]
+      if not zrealizowane.empty:
+        st.dataframe(zrealizowane, use_container_width=True)
+      else:
+        st.info("Brak zrealizowanych cesji w archiwum.")
   else:
-    st.info(
-        "Brak zarejestrowanych rezerwacji. Gdy sklepy zaczną pobierać towar z"
-        " giełdy, pojawią się tutaj."
-    )
+    st.info("Brak zarejestrowanych rezerwacji.")
 
 # --- TAB 4: ZARZĄDZAJ BAZĄ ---
 with menu[3]:
   st.header("⚙️ Zarządzanie główną bazą giełdy")
-  st.markdown(
-      "Panel administracyjny do bezpośredniej korekty stanów lub usuwania"
-      " błędnych wpisów."
-  )
+  st.markdown("Panel administracyjny do ręcznej korekty bazy.")
 
   if not df.empty:
     edited_df = st.data_editor(df, num_rows="dynamic", key="data_editor_db")
